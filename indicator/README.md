@@ -8,31 +8,55 @@ price alone. File: [`lq_playbook.pine`](lq_playbook.pine).
 1. In TradingView, open the **Pine Editor** at the bottom of the chart.
 2. Delete the template code, paste the full contents of `lq_playbook.pine`,
    then click **Save** and **Add to chart**.
-3. Use it on a **5m or 1m** chart, which is the "Now" timeframe. The 1H and
-   4H zones are pulled in automatically.
+3. Use it on a **5m to 15m** chart. On 1H and above, the 1H/4H zones are
+   switched off, and almost every bar takes a swing high or low, so the chart
+   fills with labels. An orange banner at the bottom warns you when the
+   timeframe is too high.
 
 If TradingView shows a compile error, send me the error text and line number.
+
+## Making it easier to read
+
+Open the indicator settings (double-click its name on the chart), **Display** group:
+
+| Setting | Default | What it does |
+|---|---|---|
+| Mode | **Clean** | Clean shows only the key items: day/week/Monday levels, equal highs/lows, sweeps of those or sweeps inside a 1H/4H zone, possible inducement, setups and entries. Detailed adds every swing line, every sweep and every BOS |
+| Draw labels/lines for the last N bars | 300 | Older history is left blank |
+| Show the nearest N zones above and below price | 3 | Hides far-away 1H/4H zones. They come back when price gets close |
+| Text size | Normal | Small / Normal / Large for labels and the table |
+| Checklist position | Top right | Moves the table into a corner that doesn't cover candles |
+
+Other changes that cut clutter:
+- The settings values no longer show next to the indicator name on the chart.
+- Previous day/week and Monday levels are drawn only for the current period,
+  with a name tag at the right edge (`PDH`, `PWL`, `Mon H`, ...). The tag
+  changes to `(taken)` and the line turns dashed once price trades through.
+- Sweep labels are short, for example `✕ PDH EQH · div`. **Hover over a
+  label** to see the full explanation: which pools were taken, whether RSI
+  diverged, whether price was inside a 1H/4H zone, and why it might be
+  inducement.
+- In Clean mode, a swing line is deleted once its liquidity is taken.
 
 ## What each mark means
 
 | On the chart | Playbook step | Meaning |
 |---|---|---|
-| Orange / aqua thick lines | Where | Previous **week** high / low (buy-side / sell-side liquidity) |
-| Orange / aqua thin lines | Where | Previous **day** high / low |
-| Yellow lines | Where, Monday filter | Monday high / low, drawn from Tuesday on |
+| `PWH` / `PWL` thick lines | Where | Previous week high / low |
+| `PDH` / `PDL` thin lines | Where | Previous day high / low |
+| `Mon H` / `Mon L` yellow lines | Where, Monday filter | Monday high / low, drawn from Tuesday on |
 | Grey background | Monday filter | Monday. No setups fire on Monday (can be switched off) |
-| Teal / red boxes labelled `1H FVG`, `4H FVG` | When (Step 1) | Unfilled 1H / 4H fair value gaps. A box disappears once price passes through it |
-| Purple boxes labelled `BPR` | When (Step 1) | Overlap of a bullish and a bearish FVG on the same timeframe |
-| Dotted lines at swing highs / lows | Liquidity | Swing liquidity: stops resting above highs / below lows |
-| Solid thick lines + `EQH` / `EQL` | Liquidity, boosters | Equal highs / lows: the most obvious stop clusters. They also act as boosters between entry and target |
-| Line turns grey and dashed | Step 3 | That liquidity has been taken |
-| `BSL taken` / `SSL taken` label | Step 3 | Buy-side / sell-side liquidity taken, listing which pools (PDH, PWH, MonH, EQH, swing H, ...) |
-| `RSI bear div` / `RSI bull div` | Step 3 | At the sweep, price made a new extreme but RSI did not (compared with RSI at the swept swing) |
-| `BOS` | Inducement context | Close beyond the most recent swing |
-| `BOS (IDM?)` | Step 2 (inducement) | A BOS while a 1H/4H zone in the trade direction still hasn't been reached. Traders acting on it may be entering early, and their stops become fuel |
-| `SHORT setup` / `LONG setup` + small `entry FVG` box | Step 4 | Liquidity taken + 1H/4H zone tapped + 3-candle displacement, all within the bar window. Shows suggested SL and TP |
-| `SELL` / `BUY` + dashed lines | Step 5 | Conservative entry: price came back into the entry FVG and printed an engulfing candle. Red dashed = stop, green dashed = target |
-| Table, top right | Checklist | Which conditions are met right now for a short and for a long |
+| Boxes labelled `1H bearish FVG`, `4H bullish FVG` | When (Step 1) | Unfilled 1H / 4H fair value gaps. A box disappears once price passes through it |
+| Purple `BPR` boxes | When (Step 1) | Overlap of a bullish and a bearish FVG on the same timeframe |
+| Thick solid line + `EQH` / `EQL` | Liquidity, boosters | Equal highs / lows: the most obvious stop clusters |
+| Dotted lines (Detailed mode) | Liquidity | Ordinary swing highs / lows |
+| Orange `✕ ...` label above a candle | Step 3 | Buy-side liquidity taken. Names the pools. `· div` = RSI bearish divergence |
+| Aqua `✕ ...` label below a candle | Step 3 | Sell-side liquidity taken. `· div` = RSI bullish divergence |
+| Pink `IDM?` label | Step 2 (inducement) | A break of structure before price reached the 1H/4H zone in that direction. Traders acting on it may be early, and their stops become fuel |
+| `BOS` (Detailed mode) | Context | Close beyond the most recent swing |
+| `SHORT setup` / `LONG setup` + `entry zone` box | Step 4 | Liquidity taken + 1H/4H zone tapped + 3-candle displacement, within the bar window. Hover for SL / TP |
+| `SELL` / `BUY` with red SL and green TP lines | Step 5 | Price came back into the entry zone and printed an engulfing candle |
+| Table | Checklist | Each step for short and long, a score out of 5, and the next 1H/4H target |
 
 ### How the setup rules are coded
 
