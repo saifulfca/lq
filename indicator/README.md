@@ -70,7 +70,7 @@ Other changes that cut clutter:
 
 ## Alerts
 
-Right-click the chart, choose **Add alert**, pick **LQ Playbook**, then one of:
+Right-click the chart, choose **Add alert**, pick **LQPlaybook**, then one of:
 
 - Step 1: price reached a bullish / bearish 1H/4H zone (the "set an alert and walk away" step)
 - Step 3: liquidity taken inside a zone

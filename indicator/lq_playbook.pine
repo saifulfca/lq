@@ -6,7 +6,7 @@
 //          RSI divergence at sweeps, 3-candle displacement, setup + retrace entry,
 //          suggested SL (beyond the order block) and TP (next opposing 1H/4H gap)
 // Built for 5m-15m charts. Educational tool. Not financial advice.
-indicator("LQ Playbook: Liquidity, Inducement, FVG", shorttitle = "LQ Playbook", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+indicator("LQ Playbook: Liquidity, Inducement, FVG", shorttitle = "LQPlaybook", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ───────────────────────────── Inputs ─────────────────────────────
 const string G0 = "Display"
@@ -182,6 +182,7 @@ f_level(Mark m, int x1, float y, string name, bool taken, color c, int w) =>
             m.ln.set_style(st)
             m.lb.set_xy(bar_index + 5, y)
             m.lb.set_text(txt)
+    true
 
 var Mark mPdh = Mark.new()
 var Mark mPdl = Mark.new()
@@ -233,6 +234,7 @@ f_addZone(float top, float bot, int dir, int leftTime, string tfl) =>
     if zones.size() > maxZones
         old = zones.pop()
         old.bx.delete()
+    true
 
 f_newFvg(float top, float bot, int dir, int leftTime, string tfl) =>
     array<float> ots = array.new<float>()
@@ -249,6 +251,7 @@ f_newFvg(float top, float bot, int dir, int leftTime, string tfl) =>
     if ots.size() > 0
         for k = 0 to ots.size() - 1
             f_addZone(ots.get(k), obs.get(k), 0, leftTime, tfl)
+    true
 
 // Values of the last CLOSED higher-timeframe candles (no repainting)
 f_fvg() =>
@@ -340,6 +343,7 @@ f_drawLevel(Level lv, color c) =>
         lv.ln.set_style(line.style_solid)
         lv.ln.set_width(2)
         lv.ln.set_color(c)
+    true
 
 f_taken(Level lv) =>
     if not na(lv.ln)
@@ -349,6 +353,7 @@ f_taken(Level lv) =>
             lv.ln.set_x2(bar_index)
             lv.ln.set_color(color.gray)
             lv.ln.set_style(line.style_dashed)
+    true
 
 // 1) Check which existing levels were taken on this bar
 if highs.size() > 0
@@ -549,6 +554,7 @@ f_tradeLines(float sl, float tp) =>
     if not na(tp)
         line.new(bar_index, tp, bar_index + 15, tp, color = color.lime, width = 2)
         label.new(bar_index + 15, tp, "TP " + f_px(tp), style = label.style_label_left, color = noColor, textcolor = color.lime, size = szSmall)
+    true
 
 if not na(sExp) and bar_index > lastShort
     if high > sSl or bar_index > sExp
