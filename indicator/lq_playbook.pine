@@ -10,10 +10,12 @@ indicator("LQ Playbook: Liquidity, Inducement, FVG", shorttitle = "LQPlaybook", 
 
 // ───────────────────────────── Inputs ─────────────────────────────
 const string G0 = "Display"
-viewMode  = input.string("Clean", "Mode", options = ["Clean", "Detailed"], tooltip = "Clean: only key liquidity (day/week/Monday levels, equal highs/lows, sweeps inside a 1H/4H zone), possible inducement, setups and entries. Detailed: every swing, every sweep, every BOS.", group = G0, display = display.none)
-lookback  = input.int(300, "Draw labels/lines for the last N bars", minval = 50, maxval = 5000, group = G0, display = display.none)
-nearN     = input.int(3, "Show the nearest N zones above and below price", minval = 1, maxval = 20, group = G0, display = display.none)
-textSizeI = input.string("Normal", "Text size", options = ["Small", "Normal", "Large"], group = G0, display = display.none)
+viewMode  = input.string("Clean", "Mode", options = ["Minimal", "Clean", "Detailed"], tooltip = "Minimal: levels, 1H/4H zones, setups and trades only. Clean: adds small markers for liquidity sweeps and possible inducement (hover a marker for details). Detailed: every swing line, every sweep and every BOS, with text.", group = G0, display = display.none)
+lookback  = input.int(200, "Draw markers/lines for the last N bars", minval = 50, maxval = 5000, group = G0, display = display.none)
+nearN     = input.int(2, "Show the nearest N zones above and below price", minval = 1, maxval = 20, group = G0, display = display.none)
+textSizeI = input.string("Small", "Text size", options = ["Small", "Normal", "Large"], group = G0, display = display.none)
+idmGap    = input.int(30, "Min bars between inducement markers", minval = 1, group = G0, display = display.none)
+idmAtr    = input.float(6, "Inducement only within x ATR of the zone", minval = 0.5, step = 0.5, group = G0, display = display.none)
 tablePosI = input.string("Top right", "Checklist position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], group = G0, display = display.none)
 showTable = input.bool(true, "Show checklist table", group = G0, display = display.none)
 
@@ -56,9 +58,10 @@ cMon  = input.color(color.yellow, "Monday levels", group = G5, display = display
 cIdm  = input.color(color.fuchsia, "Possible inducement", group = G5, display = display.none)
 
 // ───────────────────────────── Common ─────────────────────────────
-clean    = viewMode == "Clean"
+clean    = viewMode != "Detailed"   // Clean or Minimal
+minimal  = viewMode == "Minimal"
 sz       = textSizeI == "Small" ? size.small : textSizeI == "Large" ? size.large : size.normal
-szSmall  = textSizeI == "Large" ? size.normal : size.small
+szSmall  = textSizeI == "Small" ? size.tiny : textSizeI == "Large" ? size.normal : size.small
 draw     = bar_index >= last_bar_index - lookback
 chartSec = timeframe.in_seconds(timeframe.period)
 noColor  = color.new(color.black, 100)
@@ -224,7 +227,7 @@ f_zoneCol(int dir) =>
     dir == 1 ? cBull : dir == -1 ? cBear : cBpr
 
 f_zoneTxt(int dir, string tfl) =>
-    dir == 1 ? tfl + " bullish FVG" : dir == -1 ? tfl + " bearish FVG" : tfl + " BPR"
+    dir == 1 ? tfl + " FVG ▲" : dir == -1 ? tfl + " FVG ▼" : tfl + " BPR"
 
 f_addZone(float top, float bot, int dir, int leftTime, string tfl) =>
     col = f_zoneCol(dir)
@@ -433,37 +436,44 @@ if not na(pl)
         if not na(old.ln)
             old.ln.delete()
 
-// 3) One compact label per side per bar. Full detail is in the hover tooltip.
-// A BOS toward a zone price has not reached yet = early traders = possible inducement (IDM?)
-idmUp = bosUp and bullZoneBelow
-idmDn = bosDn and bearZoneAbove
-keyB  = bslHtf != "" or bslEq or inBearZone
-keyS  = sslHtf != "" or sslEq or inBullZone
+// 3) Sweep and inducement markers. Text only for key pools. Hover a marker for full detail.
+// A BOS toward a NEARBY zone that price has not reached yet = early traders = possible inducement (IDM?)
+var int lastIdmUp = -100000
+var int lastIdmDn = -100000
+idmUp = bosUp and bullZoneBelow and not na(tpShort) and close - tpShort <= idmAtr * atr and bar_index - lastIdmUp > idmGap
+idmDn = bosDn and bearZoneAbove and not na(tpLong) and tpLong - close <= idmAtr * atr and bar_index - lastIdmDn > idmGap
+if idmUp
+    lastIdmUp := bar_index
+if idmDn
+    lastIdmDn := bar_index
+keyB = bslHtf != "" or bslEq
+keyS = sslHtf != "" or sslEq
 
 f_pools(string htf, bool eq, bool swing, string eqName, string swName) =>
     htf + (eq ? eqName + " " : "") + (swing and not eq and htf == "" ? swName : "")
 
-if draw
-    showB = bslTaken and (not clean or keyB)
-    showS = sslTaken and (not clean or keyS)
-    if showB or idmUp or (bosUp and not clean)
+f_tip(string side, string pools, bool div, bool inZ, string zName) =>
+    side + " liquidity taken: " + (pools == "" ? "none" : pools) + "\nRSI divergence: " + (div ? "yes" : "no") + "\nInside a " + zName + " 1H/4H zone: " + (inZ ? "yes" : "no")
+
+if draw and not minimal
+    if bslTaken and (keyB or inBearZone or not clean)
         pools = f_pools(bslHtf, bslEq, bslSwing, "EQH", "swing H")
-        t = showB ? "✕ " + pools + (bearDiv ? " · div" : "") : ""
-        if idmUp
-            t := t == "" ? "IDM?" : t + "\nIDM?"
-        else if bosUp and not clean
-            t := t == "" ? "BOS" : t + "\nBOS"
-        tip = "Buy-side liquidity taken: " + (pools == "" ? "none" : pools) + "\nRSI bearish divergence: " + (bearDiv ? "yes" : "no") + "\nInside a bearish 1H/4H zone: " + (inBearZone ? "yes" : "no") + (idmUp ? "\nPossible inducement: bullish BOS before price reached the bullish 1H/4H zone below. Early buyers may be trapped." : "")
-        label.new(bar_index, high, t, style = label.style_label_down, color = idmUp ? color.new(cIdm, 20) : color.new(cBsl, 25), textcolor = color.black, size = szSmall, tooltip = tip)
-    if showS or idmDn or (bosDn and not clean)
+        txt = keyB or not clean ? pools + (bearDiv ? " div" : "") : ""
+        mc = bearDiv ? color.yellow : cBsl
+        label.new(bar_index, high, txt, yloc = yloc.abovebar, style = label.style_triangledown, color = mc, textcolor = mc, size = size.tiny, tooltip = f_tip("Buy-side", pools, bearDiv, inBearZone, "bearish"))
+    if sslTaken and (keyS or inBullZone or not clean)
         pools = f_pools(sslHtf, sslEq, sslSwing, "EQL", "swing L")
-        t = showS ? "✕ " + pools + (bullDiv ? " · div" : "") : ""
-        if idmDn
-            t := t == "" ? "IDM?" : t + "\nIDM?"
-        else if bosDn and not clean
-            t := t == "" ? "BOS" : t + "\nBOS"
-        tip = "Sell-side liquidity taken: " + (pools == "" ? "none" : pools) + "\nRSI bullish divergence: " + (bullDiv ? "yes" : "no") + "\nInside a bullish 1H/4H zone: " + (inBullZone ? "yes" : "no") + (idmDn ? "\nPossible inducement: bearish BOS before price reached the bearish 1H/4H zone above. Early sellers may be trapped." : "")
-        label.new(bar_index, low, t, style = label.style_label_up, color = idmDn ? color.new(cIdm, 20) : color.new(cSsl, 25), textcolor = color.black, size = szSmall, tooltip = tip)
+        txt = keyS or not clean ? pools + (bullDiv ? " div" : "") : ""
+        mc = bullDiv ? color.yellow : cSsl
+        label.new(bar_index, low, txt, yloc = yloc.belowbar, style = label.style_triangleup, color = mc, textcolor = mc, size = size.tiny, tooltip = f_tip("Sell-side", pools, bullDiv, inBullZone, "bullish"))
+    if idmUp
+        label.new(bar_index, low, "IDM?", yloc = yloc.belowbar, style = label.style_diamond, color = cIdm, textcolor = cIdm, size = size.tiny, tooltip = "Possible inducement: bullish BOS before price reached the bullish 1H/4H zone just below.\nEarly buyers may be trapped. Their stops below are fuel for a sweep into the zone.")
+    if idmDn
+        label.new(bar_index, high, "IDM?", yloc = yloc.abovebar, style = label.style_diamond, color = cIdm, textcolor = cIdm, size = size.tiny, tooltip = "Possible inducement: bearish BOS before price reached the bearish 1H/4H zone just above.\nEarly sellers may be trapped. Their stops above are fuel for a sweep into the zone.")
+    if not clean and bosUp and not idmUp
+        label.new(bar_index, high, "BOS", style = label.style_label_down, color = noColor, textcolor = color.gray, size = szSmall)
+    if not clean and bosDn and not idmDn
+        label.new(bar_index, low, "BOS", style = label.style_label_up, color = noColor, textcolor = color.gray, size = szSmall)
 
 // ───────────────────────────── NOW: displacement, setups, entries ─────────────────────────────
 // Candle 1 = bar[2], candle 2 = bar[1] (big body), candle 3 = current bar (same direction, leaves FVG)
@@ -530,8 +540,8 @@ if shortSetup
     sTp  := tpShort
     sExp := bar_index + entryExp
     if draw
-        box.new(bar_index - 2, sTop, bar_index + entryExp, sBot, bgcolor = color.new(color.red, 70), border_color = color.red, text = "entry zone", text_color = color.white, text_size = szSmall)
-        label.new(bar_index, high, "SHORT setup", style = label.style_label_down, color = color.red, textcolor = color.white, size = sz, tooltip = "Liquidity taken + bearish 1H/4H zone + displacement" + (sinceBearDiv <= window ? " + RSI divergence" : "") + "\nWait for price to retrace into the entry zone.\nSL " + f_px(sSl) + (na(sTp) ? "" : "\nTP " + f_px(sTp)))
+        box.new(bar_index - 2, sTop, bar_index + entryExp, sBot, bgcolor = color.new(color.red, 70), border_color = color.red, text = "entry", text_color = color.white, text_size = size.tiny)
+        label.new(bar_index, high, "SHORT setup", style = label.style_label_down, color = color.new(color.red, 30), textcolor = color.white, size = szSmall, tooltip = "Liquidity taken + bearish 1H/4H zone + displacement" + (sinceBearDiv <= window ? " + RSI divergence" : "") + "\nWait for price to retrace into the entry zone.\nSL " + f_px(sSl) + (na(sTp) ? "" : "\nTP " + f_px(sTp)))
 
 if longSetup
     lastLong := bar_index
@@ -541,19 +551,19 @@ if longSetup
     lTp  := tpLong
     lExp := bar_index + entryExp
     if draw
-        box.new(bar_index - 2, lTop, bar_index + entryExp, lBot, bgcolor = color.new(color.teal, 70), border_color = color.teal, text = "entry zone", text_color = color.white, text_size = szSmall)
-        label.new(bar_index, low, "LONG setup", style = label.style_label_up, color = color.teal, textcolor = color.white, size = sz, tooltip = "Liquidity taken + bullish 1H/4H zone + displacement" + (sinceBullDiv <= window ? " + RSI divergence" : "") + "\nWait for price to retrace into the entry zone.\nSL " + f_px(lSl) + (na(lTp) ? "" : "\nTP " + f_px(lTp)))
+        box.new(bar_index - 2, lTop, bar_index + entryExp, lBot, bgcolor = color.new(color.teal, 70), border_color = color.teal, text = "entry", text_color = color.white, text_size = size.tiny)
+        label.new(bar_index, low, "LONG setup", style = label.style_label_up, color = color.new(color.teal, 30), textcolor = color.white, size = szSmall, tooltip = "Liquidity taken + bullish 1H/4H zone + displacement" + (sinceBullDiv <= window ? " + RSI divergence" : "") + "\nWait for price to retrace into the entry zone.\nSL " + f_px(lSl) + (na(lTp) ? "" : "\nTP " + f_px(lTp)))
 
 // Conservative entry: retrace into the entry FVG, then a candle that engulfs the previous body
 bool shortEntry = false
 bool longEntry  = false
 
-f_tradeLines(float sl, float tp) =>
-    line.new(bar_index, sl, bar_index + 15, sl, color = color.red, width = 2)
-    label.new(bar_index + 15, sl, "SL " + f_px(sl), style = label.style_label_left, color = noColor, textcolor = color.red, size = szSmall)
+// Position-tool style boxes: red = risk (entry to SL), green = reward (entry to TP)
+f_tradeBoxes(float entry, float sl, float tp) =>
+    box.new(bar_index, math.max(entry, sl), bar_index + 15, math.min(entry, sl), bgcolor = color.new(color.red, 75), border_color = color.new(color.red, 40), text = "SL " + f_px(sl), text_color = color.white, text_size = szSmall, text_valign = sl > entry ? text.align_top : text.align_bottom)
     if not na(tp)
-        line.new(bar_index, tp, bar_index + 15, tp, color = color.lime, width = 2)
-        label.new(bar_index + 15, tp, "TP " + f_px(tp), style = label.style_label_left, color = noColor, textcolor = color.lime, size = szSmall)
+        rr = math.abs(tp - entry) / math.max(math.abs(entry - sl), syminfo.mintick)
+        box.new(bar_index, math.max(entry, tp), bar_index + 15, math.min(entry, tp), bgcolor = color.new(color.green, 75), border_color = color.new(color.green, 40), text = "TP " + f_px(tp) + "  (1:" + str.tostring(rr, "#.#") + ")", text_color = color.white, text_size = szSmall, text_valign = tp > entry ? text.align_top : text.align_bottom)
     true
 
 if not na(sExp) and bar_index > lastShort
@@ -563,8 +573,8 @@ if not na(sExp) and bar_index > lastShort
         shortEntry := true
         sExp := na
         if draw
-            label.new(bar_index, high, "SELL", style = label.style_label_down, color = color.red, textcolor = color.white, size = sz)
-            f_tradeLines(sSl, sTp)
+            label.new(bar_index, high, "SELL", style = label.style_label_down, color = color.red, textcolor = color.white, size = szSmall)
+            f_tradeBoxes(close, sSl, sTp)
 
 if not na(lExp) and bar_index > lastLong
     if low < lSl or bar_index > lExp
@@ -573,8 +583,8 @@ if not na(lExp) and bar_index > lastLong
         longEntry := true
         lExp := na
         if draw
-            label.new(bar_index, low, "BUY", style = label.style_label_up, color = color.teal, textcolor = color.white, size = sz)
-            f_tradeLines(lSl, lTp)
+            label.new(bar_index, low, "BUY", style = label.style_label_up, color = color.teal, textcolor = color.white, size = szSmall)
+            f_tradeBoxes(close, lSl, lTp)
 
 // ───────────────────────────── Checklist table ─────────────────────────────
 tPos = tablePosI == "Bottom right" ? position.bottom_right : tablePosI == "Top left" ? position.top_left : tablePosI == "Bottom left" ? position.bottom_left : position.top_right
@@ -605,7 +615,7 @@ if showTable and barstate.islast
     l4 = sinceBullDiv <= window
     s5 = sinceBearDisp <= window
     l5 = sinceBullDisp <= window
-    f_cell(0, 1, "Where: direction OK, not Monday", na, wht)
+    f_cell(0, 1, "Direction OK, not Monday", na, wht)
     f_tick(1, 1, s1)
     f_tick(2, 1, l1)
     f_cell(0, 2, "1. In 1H/4H zone", na, wht)
