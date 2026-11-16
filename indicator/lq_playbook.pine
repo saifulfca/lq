@@ -1,0 +1,519 @@
+//@version=6
+// LQ Playbook: marks the liquidity method from PLAYBOOK.md
+// WHERE  : previous day/week high-low, Monday high-low, Monday shading, direction filter
+// WHEN   : 1H / 4H fair value gaps and BPRs (non-repainting), removed once filled
+// NOW    : swing + equal high/low liquidity, sweeps, BOS / possible inducement,
+//          RSI divergence at sweeps, 3-candle displacement, setup + retrace entry,
+//          suggested SL (beyond the order block) and TP (next opposing 1H/4H gap)
+// Educational tool. Not financial advice.
+indicator("LQ Playbook: Liquidity, Inducement, FVG", shorttitle = "LQ Playbook", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ───────────────────────────── Inputs ─────────────────────────────
+const string G1 = "WHERE: higher-timeframe levels"
+showPD   = input.bool(true, "Previous day high / low", group = G1)
+showPW   = input.bool(true, "Previous week high / low", group = G1)
+showMon  = input.bool(true, "Monday high / low + shade Monday", group = G1)
+biasMode = input.string("Both directions", "Allowed direction (set from your Where analysis)", options = ["Both directions", "Bearish only", "Bullish only", "Auto (daily close beyond prior day)"], group = G1)
+
+const string G2 = "WHEN: 1H / 4H fair value gaps"
+tfA      = input.timeframe("60", "FVG timeframe A", group = G2)
+tfB      = input.timeframe("240", "FVG timeframe B", group = G2)
+useB     = input.bool(true, "Use timeframe B", group = G2)
+showBpr  = input.bool(true, "Mark BPR (overlap of opposite FVGs)", group = G2)
+maxZones = input.int(30, "Max live zones", minval = 4, maxval = 150, group = G2)
+fillMode = input.string("Wick", "Remove zone when price passes through it by", options = ["Wick", "Close"], group = G2)
+
+const string G3 = "Liquidity (chart timeframe)"
+pivLen     = input.int(5, "Swing length (bars each side)", minval = 2, group = G3)
+eqTol      = input.float(0.15, "Equal high / low tolerance (x ATR)", minval = 0.01, step = 0.05, group = G3)
+showSwings = input.bool(true, "Draw all swing liquidity lines (off = equal highs/lows only)", group = G3)
+maxLevels  = input.int(15, "Max tracked swings per side", minval = 3, maxval = 60, group = G3)
+showBos    = input.bool(true, "Label BOS / possible inducement", group = G3)
+showSweeps = input.bool(true, "Label liquidity taken", group = G3)
+
+const string G4 = "NOW: confirmation and setups"
+rsiLen    = input.int(14, "RSI length", minval = 2, group = G4)
+dispMult  = input.float(1.2, "Displacement: middle candle body >= x ATR", minval = 0.1, step = 0.1, group = G4)
+window    = input.int(12, "Max bars from sweep to displacement", minval = 2, group = G4)
+reqZone   = input.bool(true, "Require a 1H/4H zone tap", group = G4)
+reqDiv    = input.bool(false, "Require RSI divergence", group = G4)
+skipMon   = input.bool(true, "No setups on Monday", group = G4)
+entryExp  = input.int(20, "Bars to wait for the retrace entry", minval = 1, group = G4)
+slBuf     = input.float(0.1, "Stop buffer beyond order block (x ATR)", minval = 0, step = 0.05, group = G4)
+showTable = input.bool(true, "Show checklist table", group = G4)
+
+const string G5 = "Colours"
+cBull  = input.color(color.new(color.teal, 80), "Bullish FVG", group = G5)
+cBear  = input.color(color.new(color.red, 80), "Bearish FVG", group = G5)
+cBpr   = input.color(color.new(color.purple, 70), "BPR", group = G5)
+cBsl   = input.color(color.orange, "Buy-side liquidity (above highs)", group = G5)
+cSsl   = input.color(color.aqua, "Sell-side liquidity (below lows)", group = G5)
+cSwept = input.color(color.gray, "Taken level", group = G5)
+
+// ───────────────────────────── Common ─────────────────────────────
+atr = ta.atr(14)
+rsi = ta.rsi(close, rsiLen)
+
+tradingDay = time_tradingday
+newDay     = ta.change(tradingDay) != 0
+newWeek    = ta.change(time("W")) != 0
+isMonday   = dayofweek(tradingDay, "UTC") == dayofweek.monday
+monBlock   = skipMon and isMonday
+
+// ───────────────────────────── WHERE ─────────────────────────────
+[pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+
+f_bias() =>
+    var int b = 0
+    if close > high[1]
+        b := 1
+    else if close < low[1]
+        b := -1
+    b[1]
+
+dBias = nz(request.security(syminfo.tickerid, "D", f_bias(), lookahead = barmerge.lookahead_on))
+isAuto     = biasMode == "Auto (daily close beyond prior day)"
+allowShort = biasMode == "Both directions" or biasMode == "Bearish only" or (isAuto and dBias == -1)
+allowLong  = biasMode == "Both directions" or biasMode == "Bullish only" or (isAuto and dBias == 1)
+
+var float monHi = na
+var float monLo = na
+var bool  monHiT = false
+var bool  monLoT = false
+if isMonday
+    if newDay or na(monHi)
+        monHi  := high
+        monLo  := low
+        monHiT := false
+        monLoT := false
+    else
+        monHi := math.max(monHi, high)
+        monLo := math.min(monLo, low)
+
+plot(showPD and not newDay ? pdh : na, "Previous day high", color = cBsl, style = plot.style_linebr)
+plot(showPD and not newDay ? pdl : na, "Previous day low", color = cSsl, style = plot.style_linebr)
+plot(showPW and not newWeek ? pwh : na, "Previous week high", color = cBsl, linewidth = 2, style = plot.style_linebr)
+plot(showPW and not newWeek ? pwl : na, "Previous week low", color = cSsl, linewidth = 2, style = plot.style_linebr)
+plot(showMon and not isMonday ? monHi : na, "Monday high", color = color.yellow, style = plot.style_linebr)
+plot(showMon and not isMonday ? monLo : na, "Monday low", color = color.yellow, style = plot.style_linebr)
+bgcolor(showMon and isMonday ? color.new(color.gray, 92) : na, title = "Monday (no-trade day)")
+
+// Event flags for this bar
+bool bslTaken = false
+bool sslTaken = false
+bool bslEq    = false
+bool sslEq    = false
+bool bslSwing = false
+bool sslSwing = false
+bool bearDiv  = false
+bool bullDiv  = false
+bool bosUp    = false
+bool bosDn    = false
+string bslHtf = ""
+string sslHtf = ""
+
+// Higher-timeframe pools taken (first touch per day / week)
+var bool pdhT = false
+var bool pdlT = false
+var bool pwhT = false
+var bool pwlT = false
+if newDay
+    pdhT := false
+    pdlT := false
+if newWeek
+    pwhT := false
+    pwlT := false
+if not pdhT and not na(pdh) and high > pdh
+    pdhT := true
+    bslTaken := true
+    bslHtf += "PDH "
+if not pdlT and not na(pdl) and low < pdl
+    pdlT := true
+    sslTaken := true
+    sslHtf += "PDL "
+if not pwhT and not na(pwh) and high > pwh
+    pwhT := true
+    bslTaken := true
+    bslHtf += "PWH "
+if not pwlT and not na(pwl) and low < pwl
+    pwlT := true
+    sslTaken := true
+    sslHtf += "PWL "
+if not isMonday and not monHiT and not na(monHi) and high > monHi
+    monHiT := true
+    bslTaken := true
+    bslHtf += "MonH "
+if not isMonday and not monLoT and not na(monLo) and low < monLo
+    monLoT := true
+    sslTaken := true
+    sslHtf += "MonL "
+
+// ───────────────────────────── WHEN: 1H / 4H zones ─────────────────────────────
+type Zone
+    box    bx
+    float  top
+    float  bot
+    int    dir    // 1 bullish FVG, -1 bearish FVG, 0 BPR
+    int    side   // 1 price was above the zone when created, -1 below
+    string tf
+
+var array<Zone> zones = array.new<Zone>()
+
+f_tfLabel(simple string tf) =>
+    s = timeframe.in_seconds(tf)
+    s >= 86400 ? str.tostring(s / 86400) + "D" : s >= 3600 ? str.tostring(s / 3600) + "H" : str.tostring(s / 60) + "m"
+
+lblA = f_tfLabel(tfA)
+lblB = f_tfLabel(tfB)
+
+f_addZone(float top, float bot, int dir, int leftTime, string tfl) =>
+    col = dir == 1 ? cBull : dir == -1 ? cBear : cBpr
+    txt = dir == 0 ? tfl + " BPR" : tfl + " FVG"
+    b = box.new(leftTime, top, time, bot, xloc = xloc.bar_time, extend = extend.right, bgcolor = col, border_color = col, text = txt, text_color = color.gray, text_size = size.tiny, text_halign = text.align_right, text_valign = text.align_center)
+    sd = close >= (top + bot) / 2 ? 1 : -1
+    zones.unshift(Zone.new(b, top, bot, dir, sd, tfl))
+    if zones.size() > maxZones
+        old = zones.pop()
+        old.bx.delete()
+
+f_newFvg(float top, float bot, int dir, int leftTime, string tfl) =>
+    array<float> ots = array.new<float>()
+    array<float> obs = array.new<float>()
+    if showBpr
+        for z in zones
+            if z.dir == -dir and z.tf == tfl
+                ot = math.min(top, z.top)
+                ob = math.max(bot, z.bot)
+                if ot > ob
+                    ots.push(ot)
+                    obs.push(ob)
+    f_addZone(top, bot, dir, leftTime, tfl)
+    if ots.size() > 0
+        for k = 0 to ots.size() - 1
+            f_addZone(ots.get(k), obs.get(k), 0, leftTime, tfl)
+
+// Values of the last CLOSED higher-timeframe candles (no repainting)
+f_fvg() =>
+    bull = low > high[2]
+    bear = high < low[2]
+    [time, bull[1], bear[1], low[1], high[3], low[3], high[1], time[3]]
+
+[tA, bullA, bearA, c3LowA, c1HighA, c1LowA, c3HighA, leftA] = request.security(syminfo.tickerid, tfA, f_fvg(), lookahead = barmerge.lookahead_on)
+[tB, bullB, bearB, c3LowB, c1HighB, c1LowB, c3HighB, leftB] = request.security(syminfo.tickerid, tfB, f_fvg(), lookahead = barmerge.lookahead_on)
+
+chartSec = timeframe.in_seconds(timeframe.period)
+okA = timeframe.in_seconds(tfA) > chartSec
+okB = useB and tfB != tfA and timeframe.in_seconds(tfB) > chartSec
+newA = ta.change(tA) != 0
+newB = ta.change(tB) != 0
+
+if okA and newA
+    if bullA
+        f_newFvg(c3LowA, c1HighA, 1, leftA, lblA)
+    if bearA
+        f_newFvg(c1LowA, c3HighA, -1, leftA, lblA)
+if okB and newB
+    if bullB
+        f_newFvg(c3LowB, c1HighB, 1, leftB, lblB)
+    if bearB
+        f_newFvg(c1LowB, c3HighB, -1, leftB, lblB)
+
+bool  inBullZone    = false
+bool  inBearZone    = false
+bool  bullZoneBelow = false
+bool  bearZoneAbove = false
+float tpShort = na   // nearest bullish gap / BPR below price: target for shorts
+float tpLong  = na   // nearest bearish gap / BPR above price: target for longs
+if zones.size() > 0
+    for i = zones.size() - 1 to 0
+        z = zones.get(i)
+        isBullish = z.dir >= 0
+        isBearish = z.dir <= 0
+        if high >= z.bot and low <= z.top
+            if isBullish
+                inBullZone := true
+            if isBearish
+                inBearZone := true
+        filled = z.side == 1 ? (fillMode == "Wick" ? low < z.bot : close < z.bot) : (fillMode == "Wick" ? high > z.top : close > z.top)
+        if filled
+            z.bx.delete()
+            zones.remove(i)
+        else
+            if isBullish and z.top < close
+                bullZoneBelow := true
+                tpShort := na(tpShort) ? z.top : math.max(tpShort, z.top)
+            if isBearish and z.bot > close
+                bearZoneAbove := true
+                tpLong := na(tpLong) ? z.bot : math.min(tpLong, z.bot)
+
+// ───────────────────────────── Liquidity levels ─────────────────────────────
+type Level
+    float price
+    int   bar
+    float rsiAt
+    bool  isEq = false
+    line  ln
+
+var array<Level> highs = array.new<Level>()
+var array<Level> lows  = array.new<Level>()
+
+f_drawLevel(Level lv, color c) =>
+    if na(lv.ln)
+        lv.ln := line.new(lv.bar, lv.price, bar_index, lv.price, color = c, width = 1, style = line.style_dotted)
+    if lv.isEq
+        lv.ln.set_style(line.style_solid)
+        lv.ln.set_width(2)
+
+// 1) Check which existing levels were taken on this bar
+if highs.size() > 0
+    for i = highs.size() - 1 to 0
+        lv = highs.get(i)
+        if high > lv.price
+            bslTaken := true
+            if lv.isEq
+                bslEq := true
+            else
+                bslSwing := true
+            if rsi < lv.rsiAt
+                bearDiv := true    // price higher high, RSI lower high
+            if i == 0 and close > lv.price
+                bosUp := true
+            if not na(lv.ln)
+                lv.ln.set_x2(bar_index)
+                lv.ln.set_color(cSwept)
+                lv.ln.set_style(line.style_dashed)
+            highs.remove(i)
+        else if not na(lv.ln)
+            lv.ln.set_x2(bar_index)
+
+if lows.size() > 0
+    for i = lows.size() - 1 to 0
+        lv = lows.get(i)
+        if low < lv.price
+            sslTaken := true
+            if lv.isEq
+                sslEq := true
+            else
+                sslSwing := true
+            if rsi > lv.rsiAt
+                bullDiv := true    // price lower low, RSI higher low
+            if i == 0 and close < lv.price
+                bosDn := true
+            if not na(lv.ln)
+                lv.ln.set_x2(bar_index)
+                lv.ln.set_color(cSwept)
+                lv.ln.set_style(line.style_dashed)
+            lows.remove(i)
+        else if not na(lv.ln)
+            lv.ln.set_x2(bar_index)
+
+// 2) Add newly confirmed swings, flag equal highs / lows
+ph = ta.pivothigh(high, pivLen, pivLen)
+pl = ta.pivotlow(low, pivLen, pivLen)
+tol = eqTol * atr
+
+if not na(ph)
+    pb = bar_index - pivLen
+    nl = Level.new(ph, pb, rsi[pivLen])
+    for o in highs
+        if math.abs(o.price - ph) <= tol
+            nl.isEq := true
+            o.isEq := true
+            f_drawLevel(o, cBsl)
+    if showSwings or nl.isEq
+        f_drawLevel(nl, cBsl)
+    if nl.isEq
+        label.new(pb, ph, "EQH", style = label.style_label_down, color = color.new(color.black, 100), textcolor = cBsl, size = size.tiny)
+    highs.unshift(nl)
+    if highs.size() > maxLevels
+        old = highs.pop()
+        if not na(old.ln)
+            old.ln.delete()
+
+if not na(pl)
+    pb = bar_index - pivLen
+    nl = Level.new(pl, pb, rsi[pivLen])
+    for o in lows
+        if math.abs(o.price - pl) <= tol
+            nl.isEq := true
+            o.isEq := true
+            f_drawLevel(o, cSsl)
+    if showSwings or nl.isEq
+        f_drawLevel(nl, cSsl)
+    if nl.isEq
+        label.new(pb, pl, "EQL", style = label.style_label_up, color = color.new(color.black, 100), textcolor = cSsl, size = size.tiny)
+    lows.unshift(nl)
+    if lows.size() > maxLevels
+        old = lows.pop()
+        if not na(old.ln)
+            old.ln.delete()
+
+// 3) Labels: liquidity taken, BOS, possible inducement
+// A BOS toward a zone price has not reached yet = early traders = possible inducement (IDM?)
+if (showSweeps and bslTaken) or (showBos and bosUp)
+    t = ""
+    if showBos and bosUp
+        t += bullZoneBelow ? "BOS (IDM?)\n" : "BOS\n"
+    if showSweeps and bslTaken
+        t += "BSL taken: " + bslHtf + (bslEq ? "EQH " : "") + (bslSwing and not bslEq ? "swing H" : "")
+        t += bearDiv ? "\nRSI bear div" : ""
+    label.new(bar_index, high, t, style = label.style_label_down, color = color.new(cBsl, 80), textcolor = cBsl, size = size.tiny)
+
+if (showSweeps and sslTaken) or (showBos and bosDn)
+    t = ""
+    if showBos and bosDn
+        t += bearZoneAbove ? "BOS (IDM?)\n" : "BOS\n"
+    if showSweeps and sslTaken
+        t += "SSL taken: " + sslHtf + (sslEq ? "EQL " : "") + (sslSwing and not sslEq ? "swing L" : "")
+        t += bullDiv ? "\nRSI bull div" : ""
+    label.new(bar_index, low, t, style = label.style_label_up, color = color.new(cSsl, 80), textcolor = cSsl, size = size.tiny)
+
+// ───────────────────────────── NOW: displacement, setups, entries ─────────────────────────────
+// Candle 1 = bar[2], candle 2 = bar[1] (big body), candle 3 = current bar (same direction, leaves FVG)
+big1     = math.abs(close[1] - open[1]) >= dispMult * atr[1]
+bullDisp = big1 and close[1] > open[1] and close > open and low > high[2]
+bearDisp = big1 and close[1] < open[1] and close < open and high < low[2]
+
+sinceBsl      = nz(ta.barssince(bslTaken), 100000)
+sinceSsl      = nz(ta.barssince(sslTaken), 100000)
+sinceBearZ    = nz(ta.barssince(inBearZone), 100000)
+sinceBullZ    = nz(ta.barssince(inBullZone), 100000)
+sinceBearDiv  = nz(ta.barssince(bearDiv), 100000)
+sinceBullDiv  = nz(ta.barssince(bullDiv), 100000)
+sinceBearDisp = nz(ta.barssince(bearDisp), 100000)
+sinceBullDisp = nz(ta.barssince(bullDisp), 100000)
+hiWin = ta.highest(high, window + 2)
+loWin = ta.lowest(low, window + 2)
+
+// Order block = last opposite-colour candle before the displacement candle
+f_obHigh() =>
+    float r = na
+    for i = 2 to 20
+        if close[i] > open[i]
+            r := high[i]
+            break
+    r
+
+f_obLow() =>
+    float r = na
+    for i = 2 to 20
+        if close[i] < open[i]
+            r := low[i]
+            break
+    r
+
+var int lastShort = -100000
+var int lastLong  = -100000
+
+shortSetup = bearDisp and allowShort and not monBlock and sinceBsl <= window and (not reqZone or sinceBearZ <= window) and (not reqDiv or sinceBearDiv <= window) and bar_index - lastShort > window
+longSetup  = bullDisp and allowLong and not monBlock and sinceSsl <= window and (not reqZone or sinceBullZ <= window) and (not reqDiv or sinceBullDiv <= window) and bar_index - lastLong > window
+
+var float sTop = na
+var float sBot = na
+var float sSl  = na
+var float sTp  = na
+var int   sExp = na
+var float lTop = na
+var float lBot = na
+var float lSl  = na
+var float lTp  = na
+var int   lExp = na
+
+obH = f_obHigh()
+obL = f_obLow()
+
+if shortSetup
+    lastShort := bar_index
+    sTop := low[2]
+    sBot := high
+    sSl  := math.max(na(obH) ? hiWin : obH, sTop) + slBuf * atr
+    sTp  := tpShort
+    sExp := bar_index + entryExp
+    box.new(bar_index - 2, sTop, bar_index + entryExp, sBot, bgcolor = color.new(color.red, 65), border_color = color.red, text = "entry FVG", text_color = color.white, text_size = size.tiny)
+    label.new(bar_index, high, "SHORT setup" + (sinceBearDiv <= window ? " + RSI div" : "") + "\nSL " + str.tostring(sSl, format.mintick) + (na(sTp) ? "" : "\nTP " + str.tostring(sTp, format.mintick)), style = label.style_label_down, color = color.red, textcolor = color.white, size = size.small)
+
+if longSetup
+    lastLong := bar_index
+    lTop := low
+    lBot := high[2]
+    lSl  := math.min(na(obL) ? loWin : obL, lBot) - slBuf * atr
+    lTp  := tpLong
+    lExp := bar_index + entryExp
+    box.new(bar_index - 2, lTop, bar_index + entryExp, lBot, bgcolor = color.new(color.teal, 65), border_color = color.teal, text = "entry FVG", text_color = color.white, text_size = size.tiny)
+    label.new(bar_index, low, "LONG setup" + (sinceBullDiv <= window ? " + RSI div" : "") + "\nSL " + str.tostring(lSl, format.mintick) + (na(lTp) ? "" : "\nTP " + str.tostring(lTp, format.mintick)), style = label.style_label_up, color = color.teal, textcolor = color.white, size = size.small)
+
+// Conservative entry: retrace into the entry FVG, then a candle that engulfs the previous body
+bool shortEntry = false
+bool longEntry  = false
+
+if not na(sExp) and bar_index > lastShort
+    if high > sSl or bar_index > sExp
+        sExp := na
+    else if high >= sBot and close < open and close < math.min(open[1], close[1]) and close < sTop
+        shortEntry := true
+        sExp := na
+        label.new(bar_index, high, "SELL", style = label.style_label_down, color = color.red, textcolor = color.white, size = size.small)
+        line.new(bar_index, sSl, bar_index + 20, sSl, color = color.red, style = line.style_dashed)
+        if not na(sTp)
+            line.new(bar_index, sTp, bar_index + 20, sTp, color = color.green, style = line.style_dashed)
+
+if not na(lExp) and bar_index > lastLong
+    if low < lSl or bar_index > lExp
+        lExp := na
+    else if low <= lTop and close > open and close > math.max(open[1], close[1]) and close > lBot
+        longEntry := true
+        lExp := na
+        label.new(bar_index, low, "BUY", style = label.style_label_up, color = color.teal, textcolor = color.white, size = size.small)
+        line.new(bar_index, lSl, bar_index + 20, lSl, color = color.red, style = line.style_dashed)
+        if not na(lTp)
+            line.new(bar_index, lTp, bar_index + 20, lTp, color = color.green, style = line.style_dashed)
+
+// ───────────────────────────── Checklist table ─────────────────────────────
+var table tb = table.new(position.top_right, 3, 9, bgcolor = color.new(color.black, 30), border_color = color.gray, border_width = 1)
+
+f_cell(int c, int r, string t, color bg) =>
+    table.cell(tb, c, r, t, text_color = color.white, text_size = size.small, bgcolor = bg)
+
+f_mark(int c, int r, bool ok) =>
+    f_cell(c, r, ok ? "✓" : "–", ok ? color.new(color.green, 50) : color.new(color.gray, 80))
+
+if showTable and barstate.islast
+    hdr = color.new(color.black, 0)
+    f_cell(0, 0, "Checklist (last " + str.tostring(window) + " bars)", hdr)
+    f_cell(1, 0, "Short", hdr)
+    f_cell(2, 0, "Long", hdr)
+    f_cell(0, 1, "Direction allowed (Where)", na)
+    f_mark(1, 1, allowShort)
+    f_mark(2, 1, allowLong)
+    f_cell(0, 2, "Not Monday", na)
+    f_mark(1, 2, not monBlock)
+    f_mark(2, 2, not monBlock)
+    f_cell(0, 3, "Liquidity taken", na)
+    f_mark(1, 3, sinceBsl <= window)
+    f_mark(2, 3, sinceSsl <= window)
+    f_cell(0, 4, "Tapped 1H/4H zone (When)", na)
+    f_mark(1, 4, sinceBearZ <= window)
+    f_mark(2, 4, sinceBullZ <= window)
+    f_cell(0, 5, "RSI divergence at sweep", na)
+    f_mark(1, 5, sinceBearDiv <= window)
+    f_mark(2, 5, sinceBullDiv <= window)
+    f_cell(0, 6, "Displacement", na)
+    f_mark(1, 6, sinceBearDisp <= window)
+    f_mark(2, 6, sinceBullDisp <= window)
+    f_cell(0, 7, "Next 1H/4H target", na)
+    f_cell(1, 7, na(tpShort) ? "none" : str.tostring(tpShort, format.mintick), na)
+    f_cell(2, 7, na(tpLong) ? "none" : str.tostring(tpLong, format.mintick), na)
+    f_cell(0, 8, "Auto daily bias", na)
+    f_cell(1, 8, dBias == 1 ? "Bullish" : dBias == -1 ? "Bearish" : "None", na)
+    f_cell(2, 8, "", na)
+
+// ───────────────────────────── Alerts ─────────────────────────────
+alertcondition(inBearZone and not inBearZone[1], "Step 1: price reached bearish 1H/4H zone", "LQ Playbook: price entered a bearish 1H/4H FVG/BPR on {{ticker}}")
+alertcondition(inBullZone and not inBullZone[1], "Step 1: price reached bullish 1H/4H zone", "LQ Playbook: price entered a bullish 1H/4H FVG/BPR on {{ticker}}")
+alertcondition(bslTaken and inBearZone, "Step 3: buy-side liquidity taken inside bearish zone", "LQ Playbook: buy-side liquidity swept inside a bearish zone on {{ticker}}")
+alertcondition(sslTaken and inBullZone, "Step 3: sell-side liquidity taken inside bullish zone", "LQ Playbook: sell-side liquidity swept inside a bullish zone on {{ticker}}")
+alertcondition(shortSetup, "Step 4: short setup", "LQ Playbook: short setup on {{ticker}} (liquidity taken + zone + displacement)")
+alertcondition(longSetup, "Step 4: long setup", "LQ Playbook: long setup on {{ticker}} (liquidity taken + zone + displacement)")
+alertcondition(shortEntry, "Step 5: short entry", "LQ Playbook: SELL trigger on {{ticker}}")
+alertcondition(longEntry, "Step 5: long entry", "LQ Playbook: BUY trigger on {{ticker}}")
