@@ -24,10 +24,27 @@ Open the indicator settings (double-click its name on the chart), **Display** gr
 | Mode | **Clean** | **Minimal**: levels, 1H/4H zones, setups and trades only. **Clean**: adds small markers for sweeps and possible inducement. **Detailed**: every swing line, every sweep and every BOS, with text |
 | Draw markers/lines for the last N bars | 200 | Older history is left blank |
 | Show the nearest N zones above and below price | 2 | Hides far-away 1H/4H zones. They come back when price gets close |
-| Text size | Small | Small / Normal / Large for labels and the table |
+| Text size | Normal | Small / Normal / Large for labels, the status panel and the legend |
 | Min bars between inducement markers | 30 | Stops `IDM?` markers stacking up in a choppy range |
 | Inducement only within x ATR of the zone | 6 | Only marks inducement when the untouched zone is close |
-| Checklist position | Top right | Move the table if it sits under your drawing toolbar |
+| Status panel position | Top right | Move the panel if it sits under your drawing toolbar. The legend goes in the opposite corner |
+| Show legend | On | A key that explains each symbol and colour. Turn it off once you know them |
+
+### Status panel
+
+The panel describes the current state in words, one column for a short and one for a long:
+
+| Row | Example | Meaning |
+|---|---|---|
+| Where: direction | `allowed` / `off` / `Monday` | Whether this side is allowed by your direction setting and the Monday filter |
+| 1. 1H/4H zone | `in sell zone` or `above at 3,921.0` | Whether price has touched a zone, or where the nearest one is |
+| 3. Liquidity taken | `PDH EQH · 3 bars ago` | Which pool was taken most recently, and when |
+| 3. RSI divergence | `yes` / `no` | Divergence at a recent sweep |
+| 4. Displacement | `yes · now` / `not yet` | 3-candle displacement in that direction |
+| 6. Target (1H/4H) | `3,862.6` | Nearest opposing 1H/4H gap |
+| NEXT | `Wait: buy-side sweep` | The next playbook step to wait for |
+
+A green cell means that step is done.
 
 **Hover over any marker** to see the full explanation: which pools were
 taken, whether RSI diverged, whether price was inside a 1H/4H zone, and why
@@ -41,7 +58,7 @@ it may be inducement.
 | `PDH` / `PDL` thin lines | Where | Previous day high / low |
 | `Mon H` / `Mon L` yellow lines | Where, Monday filter | Monday high / low, drawn from Tuesday on |
 | Grey background | Monday filter | Monday. No setups fire on Monday (can be switched off) |
-| Boxes `1H FVG ▼`, `4H FVG ▲` | When (Step 1) | Unfilled 1H / 4H fair value gaps (▲ bullish, ▼ bearish). A box disappears once price passes through it |
+| Boxes `4H sell zone (FVG)`, `1H buy zone (FVG)` | When (Step 1) | Unfilled 1H / 4H fair value gaps. A box disappears once price passes through it |
 | Purple `BPR` boxes | When (Step 1) | Overlap of a bullish and a bearish FVG on the same timeframe |
 | Thick solid line + `EQH` / `EQL` | Liquidity, boosters | Equal highs / lows: the most obvious stop clusters |
 | Orange ▼ above a candle | Step 3 | Buy-side liquidity taken. Has text (`PDH`, `EQH`, ...) only for key pools. A plain marker is a swing high taken inside a bearish zone |
@@ -51,7 +68,8 @@ it may be inducement.
 | `BOS`, dotted swing lines | Detailed mode only | Every break of structure and every swing |
 | `SHORT setup` / `LONG setup` + `entry` box | Step 4 | Liquidity taken + 1H/4H zone tapped + 3-candle displacement. Hover for SL / TP |
 | `SELL` / `BUY` with red and green boxes | Step 5 | Entry triggered. Red box = risk to the stop, green box = reward to the 1H/4H target, with the risk-to-reward ratio |
-| Table | Checklist | Each step for short and long, a score out of 5, and the next 1H/4H target |
+| Status panel | Checklist | Each step in words for short and long, plus the next step to wait for |
+| Legend | Key | What each symbol and colour means |
 
 ### How the setup rules are coded
 

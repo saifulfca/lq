@@ -13,11 +13,12 @@ const string G0 = "Display"
 viewMode  = input.string("Clean", "Mode", options = ["Minimal", "Clean", "Detailed"], tooltip = "Minimal: levels, 1H/4H zones, setups and trades only. Clean: adds small markers for liquidity sweeps and possible inducement (hover a marker for details). Detailed: every swing line, every sweep and every BOS, with text.", group = G0, display = display.none)
 lookback  = input.int(200, "Draw markers/lines for the last N bars", minval = 50, maxval = 5000, group = G0, display = display.none)
 nearN     = input.int(2, "Show the nearest N zones above and below price", minval = 1, maxval = 20, group = G0, display = display.none)
-textSizeI = input.string("Small", "Text size", options = ["Small", "Normal", "Large"], group = G0, display = display.none)
+textSizeI = input.string("Normal", "Text size", options = ["Small", "Normal", "Large"], group = G0, display = display.none)
 idmGap    = input.int(30, "Min bars between inducement markers", minval = 1, group = G0, display = display.none)
 idmAtr    = input.float(6, "Inducement only within x ATR of the zone", minval = 0.5, step = 0.5, group = G0, display = display.none)
-tablePosI = input.string("Top right", "Checklist position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], group = G0, display = display.none)
-showTable = input.bool(true, "Show checklist table", group = G0, display = display.none)
+tablePosI = input.string("Top right", "Status panel position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], group = G0, display = display.none)
+showTable = input.bool(true, "Show status panel", group = G0, display = display.none)
+showLegend = input.bool(true, "Show legend (what the symbols mean)", group = G0, display = display.none)
 
 const string G1 = "WHERE: higher-timeframe levels"
 showPD   = input.bool(true, "Previous day high / low", group = G1, display = display.none)
@@ -174,7 +175,7 @@ type Mark
 
 f_level(Mark m, int x1, float y, string name, bool taken, color c, int w) =>
     if not na(y)
-        txt = name + (taken ? " (taken)" : "")
+        txt = name + " " + str.tostring(y, format.mintick) + (taken ? " (taken)" : "")
         st  = taken ? line.style_dashed : line.style_solid
         if na(m.ln)
             m.ln := line.new(x1, y, bar_index + 5, y, color = c, width = w, style = st)
@@ -227,11 +228,11 @@ f_zoneCol(int dir) =>
     dir == 1 ? cBull : dir == -1 ? cBear : cBpr
 
 f_zoneTxt(int dir, string tfl) =>
-    dir == 1 ? tfl + " FVG ▲" : dir == -1 ? tfl + " FVG ▼" : tfl + " BPR"
+    dir == 1 ? tfl + " buy zone (FVG)" : dir == -1 ? tfl + " sell zone (FVG)" : tfl + " BPR"
 
 f_addZone(float top, float bot, int dir, int leftTime, string tfl) =>
     col = f_zoneCol(dir)
-    b = box.new(leftTime, top, time, bot, xloc = xloc.bar_time, extend = extend.right, bgcolor = col, border_color = col, text = f_zoneTxt(dir, tfl), text_color = color.new(color.white, 35), text_size = szSmall, text_halign = text.align_right, text_valign = text.align_center)
+    b = box.new(leftTime, top, time, bot, xloc = xloc.bar_time, extend = extend.right, bgcolor = col, border_color = col, text = f_zoneTxt(dir, tfl), text_color = color.new(color.white, 10), text_size = szSmall, text_halign = text.align_left, text_valign = text.align_center)
     sd = close >= (top + bot) / 2 ? 1 : -1
     zones.unshift(Zone.new(b, top, bot, dir, sd, tfl))
     if zones.size() > maxZones
@@ -455,6 +456,13 @@ f_pools(string htf, bool eq, bool swing, string eqName, string swName) =>
 f_tip(string side, string pools, bool div, bool inZ, string zName) =>
     side + " liquidity taken: " + (pools == "" ? "none" : pools) + "\nRSI divergence: " + (div ? "yes" : "no") + "\nInside a " + zName + " 1H/4H zone: " + (inZ ? "yes" : "no")
 
+var string lastBslName = ""
+var string lastSslName = ""
+if bslTaken
+    lastBslName := f_pools(bslHtf, bslEq, bslSwing, "EQH", "swing high ")
+if sslTaken
+    lastSslName := f_pools(sslHtf, sslEq, sslSwing, "EQL", "swing low ")
+
 if draw and not minimal
     if bslTaken and (keyB or inBearZone or not clean)
         pools = f_pools(bslHtf, bslEq, bslSwing, "EQH", "swing H")
@@ -586,25 +594,27 @@ if not na(lExp) and bar_index > lastLong
             label.new(bar_index, low, "BUY", style = label.style_label_up, color = color.teal, textcolor = color.white, size = szSmall)
             f_tradeBoxes(close, lSl, lTp)
 
-// ───────────────────────────── Checklist table ─────────────────────────────
+// ───────────────────────────── Status panel (plain words) + legend ─────────────────────────────
 tPos = tablePosI == "Bottom right" ? position.bottom_right : tablePosI == "Top left" ? position.top_left : tablePosI == "Bottom left" ? position.bottom_left : position.top_right
-var table tb = table.new(tPos, 3, 10, bgcolor = color.new(#131722, 10), border_color = color.new(color.gray, 60), border_width = 1, frame_color = color.gray, frame_width = 1)
+lPos = tablePosI == "Bottom right" ? position.top_right : position.bottom_right
+var table tb  = table.new(tPos, 3, 9, bgcolor = color.new(#131722, 5), border_color = color.new(color.gray, 70), border_width = 1, frame_color = color.gray, frame_width = 1)
+var table lgd = table.new(lPos, 2, 8, bgcolor = color.new(#131722, 5), frame_color = color.gray, frame_width = 1)
 
 f_cell(int c, int r, string t, color bg, color fg) =>
     table.cell(tb, c, r, t, text_color = fg, text_size = sz, bgcolor = bg, text_halign = c == 0 ? text.align_left : text.align_center)
 
-f_tick(int c, int r, bool ok) =>
-    f_cell(c, r, ok ? "✓" : "·", ok ? color.new(color.green, 35) : na, ok ? color.white : color.gray)
+f_step(int c, int r, bool ok, string t) =>
+    f_cell(c, r, t, ok ? color.new(color.green, 45) : na, ok ? color.white : color.gray)
 
-f_score(bool a, bool b, bool c, bool d, bool e) =>
-    (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0) + (d ? 1 : 0) + (e ? 1 : 0)
+f_ago(int n) =>
+    n == 0 ? "now" : str.tostring(n) + " bars ago"
+
+f_next(bool dirOk, bool pend, bool z, bool liq, bool disp, string zoneWord, string liqWord, string dispWord) =>
+    not dirOk ? "Direction off" : monBlock ? "Monday: no trades" : pend ? "Wait: retrace into entry box" : not z ? "Wait: price to reach " + zoneWord : not liq ? "Wait: " + liqWord + " sweep" : not disp ? "Wait: " + dispWord + " displacement" : "Check chart: setup forming"
 
 if showTable and barstate.islast
     hdr = color.new(#2a2e39, 0)
     wht = color.white
-    f_cell(0, 0, "Playbook step", hdr, wht)
-    f_cell(1, 0, "Short", hdr, color.new(color.red, 0))
-    f_cell(2, 0, "Long", hdr, color.new(color.teal, 0))
     s1 = allowShort and not monBlock
     l1 = allowLong and not monBlock
     s2 = sinceBearZ <= window
@@ -615,33 +625,48 @@ if showTable and barstate.islast
     l4 = sinceBullDiv <= window
     s5 = sinceBearDisp <= window
     l5 = sinceBullDisp <= window
-    f_cell(0, 1, "Direction OK, not Monday", na, wht)
-    f_tick(1, 1, s1)
-    f_tick(2, 1, l1)
-    f_cell(0, 2, "1. In 1H/4H zone", na, wht)
-    f_tick(1, 2, s2)
-    f_tick(2, 2, l2)
+    f_cell(0, 0, "LQ Playbook", hdr, wht)
+    f_cell(1, 0, "SHORT", hdr, color.red)
+    f_cell(2, 0, "LONG", hdr, color.teal)
+    f_cell(0, 1, "Where: direction", na, wht)
+    f_step(1, 1, s1, not allowShort ? "off" : monBlock ? "Monday" : "allowed")
+    f_step(2, 1, l1, not allowLong ? "off" : monBlock ? "Monday" : "allowed")
+    f_cell(0, 2, "1. 1H/4H zone", na, wht)
+    f_step(1, 2, s2, s2 ? "in sell zone" : na(tpLong) ? "none above" : "above at " + f_px(tpLong))
+    f_step(2, 2, l2, l2 ? "in buy zone" : na(tpShort) ? "none below" : "below at " + f_px(tpShort))
     f_cell(0, 3, "3. Liquidity taken", na, wht)
-    f_tick(1, 3, s3)
-    f_tick(2, 3, l3)
+    f_step(1, 3, s3, s3 ? lastBslName + "· " + f_ago(sinceBsl) : "not yet")
+    f_step(2, 3, l3, l3 ? lastSslName + "· " + f_ago(sinceSsl) : "not yet")
     f_cell(0, 4, "3. RSI divergence", na, wht)
-    f_tick(1, 4, s4)
-    f_tick(2, 4, l4)
+    f_step(1, 4, s4, s4 ? "yes" : "no")
+    f_step(2, 4, l4, l4 ? "yes" : "no")
     f_cell(0, 5, "4. Displacement", na, wht)
-    f_tick(1, 5, s5)
-    f_tick(2, 5, l5)
-    sc = f_score(s1, s2, s3, s4, s5)
-    lc = f_score(l1, l2, l3, l4, l5)
-    f_cell(0, 6, "Score", hdr, wht)
-    f_cell(1, 6, str.tostring(sc) + " / 5", sc >= 4 ? color.new(color.red, 30) : hdr, wht)
-    f_cell(2, 6, str.tostring(lc) + " / 5", lc >= 4 ? color.new(color.teal, 30) : hdr, wht)
-    f_cell(0, 7, "6. Next 1H/4H target", na, wht)
-    f_cell(1, 7, na(tpShort) ? "–" : f_px(tpShort), na, wht)
-    f_cell(2, 7, na(tpLong) ? "–" : f_px(tpLong), na, wht)
+    f_step(1, 5, s5, s5 ? "yes · " + f_ago(sinceBearDisp) : "not yet")
+    f_step(2, 5, l5, l5 ? "yes · " + f_ago(sinceBullDisp) : "not yet")
+    f_cell(0, 6, "6. Target (1H/4H)", na, wht)
+    f_cell(1, 6, na(tpShort) ? "none" : f_px(tpShort), na, wht)
+    f_cell(2, 6, na(tpLong) ? "none" : f_px(tpLong), na, wht)
+    f_cell(0, 7, "NEXT", hdr, color.yellow)
+    f_cell(1, 7, f_next(allowShort, not na(sExp), s2, s3, s5, "sell zone", "buy-side", "bearish"), hdr, color.yellow)
+    f_cell(2, 7, f_next(allowLong, not na(lExp), l2, l3, l5, "buy zone", "sell-side", "bullish"), hdr, color.yellow)
     if isAuto
         f_cell(0, 8, "Auto daily bias", na, wht)
         f_cell(1, 8, dBias == 1 ? "Bullish" : dBias == -1 ? "Bearish" : "None", na, wht)
         f_cell(2, 8, "", na, wht)
+
+f_lg(int r, string sym, color c, string t) =>
+    table.cell(lgd, 0, r, sym, text_color = c, text_size = sz)
+    table.cell(lgd, 1, r, t, text_color = color.white, text_size = szSmall, text_halign = text.align_left)
+
+if showLegend and barstate.islast
+    f_lg(0, "■", color.new(color.red, 20), "Sell zone: bearish 1H/4H FVG")
+    f_lg(1, "■", color.new(color.teal, 20), "Buy zone: bullish 1H/4H FVG")
+    f_lg(2, "■", color.new(color.purple, 20), "BPR: both FVGs overlap")
+    f_lg(3, "━", cBsl, "PDH / PWH: buy-side liquidity")
+    f_lg(4, "━", cSsl, "PDL / PWL: sell-side liquidity")
+    f_lg(5, "▼ ▲", cBsl, "Liquidity taken (orange above / aqua below)")
+    f_lg(6, "▼ ▲", color.yellow, "Taken with RSI divergence")
+    f_lg(7, "◆", cIdm, "Possible inducement: early traders")
 
 var table warnTb = table.new(position.bottom_center, 1, 1)
 if barstate.islast and chartSec >= 3600
