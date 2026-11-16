@@ -9,8 +9,29 @@
 indicator("LQ Playbook: Liquidity, Inducement, FVG", shorttitle = "LQPlaybook", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ───────────────────────────── Inputs ─────────────────────────────
+const string GS = "Show / hide on chart"
+showPW     = input.bool(true, "Weekly high / low (PWH / PWL)", group = GS, display = display.none)
+showPD     = input.bool(true, "Daily high / low (PDH / PDL)", group = GS, display = display.none)
+showMon    = input.bool(true, "Monday high / low", group = GS, display = display.none)
+showMonBg  = input.bool(true, "Grey shading on Monday", group = GS, display = display.none)
+showFvgA   = input.bool(true, "1H FVG zones (timeframe A)", group = GS, display = display.none)
+showFvgB   = input.bool(true, "4H FVG zones (timeframe B)", group = GS, display = display.none)
+showBprZ   = input.bool(true, "BPR zones", group = GS, display = display.none)
+showEq     = input.bool(true, "Equal highs / lows (EQH / EQL)", group = GS, display = display.none)
+showSwingL = input.bool(false, "All swing high / low lines", group = GS, display = display.none)
+showSweeps = input.bool(true, "Liquidity sweeps / traps (triangles)", group = GS, display = display.none)
+sweepScope = input.string("Key pools + inside zones", "Which sweeps", options = ["Key pools only", "Key pools + inside zones", "All"], tooltip = "Key pools = day / week / Monday highs and lows and equal highs / lows.", group = GS, display = display.none)
+showDivCol = input.bool(true, "Yellow triangle when RSI diverges", group = GS, display = display.none)
+showIdm    = input.bool(true, "Possible inducement (pink diamonds)", group = GS, display = display.none)
+showBos    = input.bool(false, "BOS labels", group = GS, display = display.none)
+showSetups = input.bool(true, "Setup labels + entry box", group = GS, display = display.none)
+showTrades = input.bool(true, "BUY / SELL signals + SL / TP boxes", group = GS, display = display.none)
+
+const string GK = "Chart scale"
+keepScale = input.bool(true, "Keep normal chart scale (don't draw far-away levels / zones)", tooltip = "TradingView zooms out to fit everything an indicator draws. With this on, levels and zones farther than the distance below are not drawn. They are still used by the logic and listed in the status panel.", group = GK, display = display.none)
+farMult   = input.float(1.5, "Max distance from price (x daily ATR)", minval = 0.2, step = 0.1, group = GK, display = display.none)
+
 const string G0 = "Display"
-viewMode  = input.string("Clean", "Mode", options = ["Minimal", "Clean", "Detailed"], tooltip = "Minimal: levels, 1H/4H zones, setups and trades only. Clean: adds small markers for liquidity sweeps and possible inducement (hover a marker for details). Detailed: every swing line, every sweep and every BOS, with text.", group = G0, display = display.none)
 lookback  = input.int(200, "Draw markers/lines for the last N bars", minval = 50, maxval = 5000, group = G0, display = display.none)
 nearN     = input.int(2, "Show the nearest N zones above and below price", minval = 1, maxval = 20, group = G0, display = display.none)
 textSizeI = input.string("Normal", "Text size", options = ["Small", "Normal", "Large"], group = G0, display = display.none)
@@ -21,16 +42,13 @@ showTable = input.bool(true, "Show status panel", group = G0, display = display.
 showLegend = input.bool(true, "Show legend (what the symbols mean)", group = G0, display = display.none)
 
 const string G1 = "WHERE: higher-timeframe levels"
-showPD   = input.bool(true, "Previous day high / low", group = G1, display = display.none)
-showPW   = input.bool(true, "Previous week high / low", group = G1, display = display.none)
-showMon  = input.bool(true, "Monday high / low + shade Monday", group = G1, display = display.none)
 biasMode = input.string("Both directions", "Allowed direction (set from your Where analysis)", options = ["Both directions", "Bearish only", "Bullish only", "Auto (daily close beyond prior day)"], group = G1, display = display.none)
 
 const string G2 = "WHEN: 1H / 4H fair value gaps"
 tfA      = input.timeframe("60", "FVG timeframe A", group = G2, display = display.none)
 tfB      = input.timeframe("240", "FVG timeframe B", group = G2, display = display.none)
 useB     = input.bool(true, "Use timeframe B", group = G2, display = display.none)
-showBpr  = input.bool(true, "Mark BPR (overlap of opposite FVGs)", group = G2, display = display.none)
+showBpr  = input.bool(true, "Detect BPR (overlap of opposite FVGs)", group = G2, display = display.none)
 maxZones = input.int(30, "Max tracked zones", minval = 4, maxval = 150, group = G2, display = display.none)
 fillMode = input.string("Wick", "Remove zone when price passes through it by", options = ["Wick", "Close"], group = G2, display = display.none)
 
@@ -59,8 +77,6 @@ cMon  = input.color(color.yellow, "Monday levels", group = G5, display = display
 cIdm  = input.color(color.fuchsia, "Possible inducement", group = G5, display = display.none)
 
 // ───────────────────────────── Common ─────────────────────────────
-clean    = viewMode != "Detailed"   // Clean or Minimal
-minimal  = viewMode == "Minimal"
 sz       = textSizeI == "Small" ? size.small : textSizeI == "Large" ? size.large : size.normal
 szSmall  = textSizeI == "Small" ? size.tiny : textSizeI == "Large" ? size.normal : size.small
 draw     = bar_index >= last_bar_index - lookback
@@ -87,6 +103,10 @@ f_bias() =>
     else if close < low[1]
         b := -1
     b[1]
+
+dAtr = request.security(syminfo.tickerid, "D", ta.atr(14)[1], lookahead = barmerge.lookahead_on)
+f_near(float y) =>
+    not keepScale or na(dAtr) or na(y) or math.abs(y - close) <= farMult * dAtr
 
 dBias = nz(request.security(syminfo.tickerid, "D", f_bias(), lookahead = barmerge.lookahead_on))
 isAuto     = biasMode == "Auto (daily close beyond prior day)"
@@ -116,7 +136,7 @@ if newDay
 if newWeek
     weekBar := bar_index
 
-bgcolor(showMon and isMonday and chartSec < 86400 ? color.new(color.gray, 93) : na, title = "Monday (no-trade day)")
+bgcolor(showMonBg and isMonday and chartSec < 86400 ? color.new(color.gray, 93) : na, title = "Monday (no-trade day)")
 
 // Event flags for this bar
 bool bslTaken = false
@@ -173,8 +193,9 @@ type Mark
     line  ln
     label lb
 
-f_level(Mark m, int x1, float y, string name, bool taken, color c, int w) =>
-    if not na(y)
+f_level(Mark m, int x1, float y, string name, bool taken, color c, int w, bool show) =>
+    near = f_near(y)
+    if show and not na(y) and near
         txt = name + " " + str.tostring(y, format.mintick) + (taken ? " (taken)" : "")
         st  = taken ? line.style_dashed : line.style_solid
         if na(m.ln)
@@ -186,7 +207,12 @@ f_level(Mark m, int x1, float y, string name, bool taken, color c, int w) =>
             m.ln.set_style(st)
             m.lb.set_xy(bar_index + 5, y)
             m.lb.set_text(txt)
-    true
+    else if not na(m.ln)
+        m.ln.delete()
+        m.lb.delete()
+        m.ln := na
+        m.lb := na
+    show and not na(y) and not near
 
 var Mark mPdh = Mark.new()
 var Mark mPdl = Mark.new()
@@ -195,16 +221,22 @@ var Mark mPwl = Mark.new()
 var Mark mMh  = Mark.new()
 var Mark mMl  = Mark.new()
 
+string farTxt = ""
 if barstate.islast
-    if showPD and chartSec < 86400
-        f_level(mPdh, dayBar, pdh, "PDH", pdhT, cBsl, 1)
-        f_level(mPdl, dayBar, pdl, "PDL", pdlT, cSsl, 1)
-    if showPW and chartSec < 604800
-        f_level(mPwh, weekBar, pwh, "PWH", pwhT, cBsl, 2)
-        f_level(mPwl, weekBar, pwl, "PWL", pwlT, cSsl, 2)
-    if showMon and chartSec < 86400 and not isMonday and not na(monBar)
-        f_level(mMh, monBar, monHi, "Mon H", monHiT, cMon, 1)
-        f_level(mMl, monBar, monLo, "Mon L", monLoT, cMon, 1)
+    intra = chartSec < 86400
+    if f_level(mPwh, weekBar, pwh, "PWH", pwhT, cBsl, 2, showPW and chartSec < 604800)
+        farTxt += "PWH " + str.tostring(pwh, format.mintick) + "  "
+    if f_level(mPwl, weekBar, pwl, "PWL", pwlT, cSsl, 2, showPW and chartSec < 604800)
+        farTxt += "PWL " + str.tostring(pwl, format.mintick) + "  "
+    if f_level(mPdh, dayBar, pdh, "PDH", pdhT, cBsl, 1, showPD and intra)
+        farTxt += "PDH " + str.tostring(pdh, format.mintick) + "  "
+    if f_level(mPdl, dayBar, pdl, "PDL", pdlT, cSsl, 1, showPD and intra)
+        farTxt += "PDL " + str.tostring(pdl, format.mintick) + "  "
+    monShow = showMon and intra and not isMonday and not na(monBar)
+    if f_level(mMh, monBar, monHi, "Mon H", monHiT, cMon, 1, monShow)
+        farTxt += "Mon H " + str.tostring(monHi, format.mintick) + "  "
+    if f_level(mMl, monBar, monLo, "Mon L", monLoT, cMon, 1, monShow)
+        farTxt += "Mon L " + str.tostring(monLo, format.mintick) + "  "
 
 // ───────────────────────────── WHEN: 1H / 4H zones ─────────────────────────────
 type Zone
@@ -214,6 +246,7 @@ type Zone
     int    dir    // 1 bullish FVG, -1 bearish FVG, 0 BPR
     int    side   // 1 price was above the zone when created, -1 below
     string tf
+    int    left   // time of the zone's first candle
 
 var array<Zone> zones = array.new<Zone>()
 
@@ -231,13 +264,12 @@ f_zoneTxt(int dir, string tfl) =>
     dir == 1 ? tfl + " buy zone (FVG)" : dir == -1 ? tfl + " sell zone (FVG)" : tfl + " BPR"
 
 f_addZone(float top, float bot, int dir, int leftTime, string tfl) =>
-    col = f_zoneCol(dir)
-    b = box.new(leftTime, top, time, bot, xloc = xloc.bar_time, extend = extend.right, bgcolor = col, border_color = col, text = f_zoneTxt(dir, tfl), text_color = color.new(color.white, 10), text_size = szSmall, text_halign = text.align_left, text_valign = text.align_center)
     sd = close >= (top + bot) / 2 ? 1 : -1
-    zones.unshift(Zone.new(b, top, bot, dir, sd, tfl))
+    zones.unshift(Zone.new(na, top, bot, dir, sd, tfl, leftTime))
     if zones.size() > maxZones
         old = zones.pop()
-        old.bx.delete()
+        if not na(old.bx)
+            old.bx.delete()
     true
 
 f_newFvg(float top, float bot, int dir, int leftTime, string tfl) =>
@@ -300,7 +332,8 @@ if zones.size() > 0
                 inBearZone := true
         filled = z.side == 1 ? (fillMode == "Wick" ? low < z.bot : close < z.bot) : (fillMode == "Wick" ? high > z.top : close > z.top)
         if filled
-            z.bx.delete()
+            if not na(z.bx)
+                z.bx.delete()
             zones.remove(i)
         else
             if isBullish and z.top < close
@@ -323,11 +356,15 @@ if barstate.islast and zones.size() > 0
             od = oAbove ? o.bot - close : oBelow ? close - o.top : 0.0
             if oAbove == zAbove and oBelow == zBelow and od < d
                 rank += 1
-        vis = rank < nearN
-        col = f_zoneCol(z.dir)
-        z.bx.set_bgcolor(vis ? col : noColor)
-        z.bx.set_border_color(vis ? col : noColor)
-        z.bx.set_text(vis ? f_zoneTxt(z.dir, z.tf) : "")
+        typeOn = z.dir == 0 ? showBprZ : true
+        tfOn = z.tf == lblA ? showFvgA : showFvgB
+        vis = rank < nearN and typeOn and tfOn and f_near(zAbove ? z.bot : zBelow ? z.top : close)
+        if vis and na(z.bx)
+            col = f_zoneCol(z.dir)
+            z.bx := box.new(z.left, z.top, time, z.bot, xloc = xloc.bar_time, extend = extend.right, bgcolor = col, border_color = col, text = f_zoneTxt(z.dir, z.tf), text_color = color.new(color.white, 10), text_size = szSmall, text_halign = text.align_left, text_valign = text.align_center)
+        else if not vis and not na(z.bx)
+            z.bx.delete()
+            z.bx := na
 
 // ───────────────────────────── Liquidity levels ─────────────────────────────
 type Level
@@ -351,7 +388,7 @@ f_drawLevel(Level lv, color c) =>
 
 f_taken(Level lv) =>
     if not na(lv.ln)
-        if clean
+        if not showSwingL
             lv.ln.delete()
         else
             lv.ln.set_x2(bar_index)
@@ -408,10 +445,11 @@ if not na(ph)
         if math.abs(o.price - ph) <= tol
             nl.isEq := true
             o.isEq := true
-            f_drawLevel(o, cBsl)
-    if not clean or nl.isEq
+            if showEq or showSwingL
+                f_drawLevel(o, cBsl)
+    if showSwingL or (nl.isEq and showEq)
         f_drawLevel(nl, cBsl)
-    if nl.isEq and draw
+    if nl.isEq and draw and showEq
         label.new(pb, ph, "EQH", style = label.style_label_down, color = noColor, textcolor = cBsl, size = szSmall, tooltip = "Equal highs: stops rest just above. Buy-side liquidity.")
     highs.unshift(nl)
     if highs.size() > maxLevels
@@ -426,16 +464,28 @@ if not na(pl)
         if math.abs(o.price - pl) <= tol
             nl.isEq := true
             o.isEq := true
-            f_drawLevel(o, cSsl)
-    if not clean or nl.isEq
+            if showEq or showSwingL
+                f_drawLevel(o, cSsl)
+    if showSwingL or (nl.isEq and showEq)
         f_drawLevel(nl, cSsl)
-    if nl.isEq and draw
+    if nl.isEq and draw and showEq
         label.new(pb, pl, "EQL", style = label.style_label_up, color = noColor, textcolor = cSsl, size = szSmall, tooltip = "Equal lows: stops rest just below. Sell-side liquidity.")
     lows.unshift(nl)
     if lows.size() > maxLevels
         old = lows.pop()
         if not na(old.ln)
             old.ln.delete()
+
+f_syncFar(array<Level> lvls) =>
+    for lv in lvls
+        if not na(lv.ln) and not f_near(lv.price)
+            lv.ln.delete()
+            lv.ln := na
+    true
+
+if barstate.islast and keepScale
+    f_syncFar(highs)
+    f_syncFar(lows)
 
 // 3) Sweep and inducement markers. Text only for key pools. Hover a marker for full detail.
 // A BOS toward a NEARBY zone that price has not reached yet = early traders = possible inducement (IDM?)
@@ -463,24 +513,26 @@ if bslTaken
 if sslTaken
     lastSslName := f_pools(sslHtf, sslEq, sslSwing, "EQL", "swing low ")
 
-if draw and not minimal
-    if bslTaken and (keyB or inBearZone or not clean)
+allSweeps  = sweepScope == "All"
+zoneSweeps = sweepScope != "Key pools only"
+if draw
+    if showSweeps and bslTaken and (keyB or (zoneSweeps and inBearZone) or allSweeps)
         pools = f_pools(bslHtf, bslEq, bslSwing, "EQH", "swing H")
-        txt = keyB or not clean ? pools + (bearDiv ? " div" : "") : ""
-        mc = bearDiv ? color.yellow : cBsl
+        txt = keyB or allSweeps ? pools + (bearDiv and showDivCol ? " div" : "") : ""
+        mc = bearDiv and showDivCol ? color.yellow : cBsl
         label.new(bar_index, high, txt, yloc = yloc.abovebar, style = label.style_triangledown, color = mc, textcolor = mc, size = size.tiny, tooltip = f_tip("Buy-side", pools, bearDiv, inBearZone, "bearish"))
-    if sslTaken and (keyS or inBullZone or not clean)
+    if showSweeps and sslTaken and (keyS or (zoneSweeps and inBullZone) or allSweeps)
         pools = f_pools(sslHtf, sslEq, sslSwing, "EQL", "swing L")
-        txt = keyS or not clean ? pools + (bullDiv ? " div" : "") : ""
-        mc = bullDiv ? color.yellow : cSsl
+        txt = keyS or allSweeps ? pools + (bullDiv and showDivCol ? " div" : "") : ""
+        mc = bullDiv and showDivCol ? color.yellow : cSsl
         label.new(bar_index, low, txt, yloc = yloc.belowbar, style = label.style_triangleup, color = mc, textcolor = mc, size = size.tiny, tooltip = f_tip("Sell-side", pools, bullDiv, inBullZone, "bullish"))
-    if idmUp
+    if showIdm and idmUp
         label.new(bar_index, low, "IDM?", yloc = yloc.belowbar, style = label.style_diamond, color = cIdm, textcolor = cIdm, size = size.tiny, tooltip = "Possible inducement: bullish BOS before price reached the bullish 1H/4H zone just below.\nEarly buyers may be trapped. Their stops below are fuel for a sweep into the zone.")
-    if idmDn
+    if showIdm and idmDn
         label.new(bar_index, high, "IDM?", yloc = yloc.abovebar, style = label.style_diamond, color = cIdm, textcolor = cIdm, size = size.tiny, tooltip = "Possible inducement: bearish BOS before price reached the bearish 1H/4H zone just above.\nEarly sellers may be trapped. Their stops above are fuel for a sweep into the zone.")
-    if not clean and bosUp and not idmUp
+    if showBos and bosUp and not (showIdm and idmUp)
         label.new(bar_index, high, "BOS", style = label.style_label_down, color = noColor, textcolor = color.gray, size = szSmall)
-    if not clean and bosDn and not idmDn
+    if showBos and bosDn and not (showIdm and idmDn)
         label.new(bar_index, low, "BOS", style = label.style_label_up, color = noColor, textcolor = color.gray, size = szSmall)
 
 // ───────────────────────────── NOW: displacement, setups, entries ─────────────────────────────
@@ -547,7 +599,7 @@ if shortSetup
     sSl  := math.max(na(obH) ? hiWin : obH, sTop) + slBuf * atr
     sTp  := tpShort
     sExp := bar_index + entryExp
-    if draw
+    if draw and showSetups
         box.new(bar_index - 2, sTop, bar_index + entryExp, sBot, bgcolor = color.new(color.red, 70), border_color = color.red, text = "entry", text_color = color.white, text_size = size.tiny)
         label.new(bar_index, high, "SHORT setup", style = label.style_label_down, color = color.new(color.red, 30), textcolor = color.white, size = szSmall, tooltip = "Liquidity taken + bearish 1H/4H zone + displacement" + (sinceBearDiv <= window ? " + RSI divergence" : "") + "\nWait for price to retrace into the entry zone.\nSL " + f_px(sSl) + (na(sTp) ? "" : "\nTP " + f_px(sTp)))
 
@@ -558,7 +610,7 @@ if longSetup
     lSl  := math.min(na(obL) ? loWin : obL, lBot) - slBuf * atr
     lTp  := tpLong
     lExp := bar_index + entryExp
-    if draw
+    if draw and showSetups
         box.new(bar_index - 2, lTop, bar_index + entryExp, lBot, bgcolor = color.new(color.teal, 70), border_color = color.teal, text = "entry", text_color = color.white, text_size = size.tiny)
         label.new(bar_index, low, "LONG setup", style = label.style_label_up, color = color.new(color.teal, 30), textcolor = color.white, size = szSmall, tooltip = "Liquidity taken + bullish 1H/4H zone + displacement" + (sinceBullDiv <= window ? " + RSI divergence" : "") + "\nWait for price to retrace into the entry zone.\nSL " + f_px(lSl) + (na(lTp) ? "" : "\nTP " + f_px(lTp)))
 
@@ -580,7 +632,7 @@ if not na(sExp) and bar_index > lastShort
     else if high >= sBot and close < open and close < math.min(open[1], close[1]) and close < sTop
         shortEntry := true
         sExp := na
-        if draw
+        if draw and showTrades
             label.new(bar_index, high, "SELL", style = label.style_label_down, color = color.red, textcolor = color.white, size = szSmall)
             f_tradeBoxes(close, sSl, sTp)
 
@@ -590,14 +642,14 @@ if not na(lExp) and bar_index > lastLong
     else if low <= lTop and close > open and close > math.max(open[1], close[1]) and close > lBot
         longEntry := true
         lExp := na
-        if draw
+        if draw and showTrades
             label.new(bar_index, low, "BUY", style = label.style_label_up, color = color.teal, textcolor = color.white, size = szSmall)
             f_tradeBoxes(close, lSl, lTp)
 
 // ───────────────────────────── Status panel (plain words) + legend ─────────────────────────────
 tPos = tablePosI == "Bottom right" ? position.bottom_right : tablePosI == "Top left" ? position.top_left : tablePosI == "Bottom left" ? position.bottom_left : position.top_right
 lPos = tablePosI == "Bottom right" ? position.top_right : position.bottom_right
-var table tb  = table.new(tPos, 3, 9, bgcolor = color.new(#131722, 5), border_color = color.new(color.gray, 70), border_width = 1, frame_color = color.gray, frame_width = 1)
+var table tb  = table.new(tPos, 3, 10, bgcolor = color.new(#131722, 5), border_color = color.new(color.gray, 70), border_width = 1, frame_color = color.gray, frame_width = 1)
 var table lgd = table.new(lPos, 2, 8, bgcolor = color.new(#131722, 5), frame_color = color.gray, frame_width = 1)
 
 f_cell(int c, int r, string t, color bg, color fg) =>
@@ -649,10 +701,14 @@ if showTable and barstate.islast
     f_cell(0, 7, "NEXT", hdr, color.yellow)
     f_cell(1, 7, f_next(allowShort, not na(sExp), s2, s3, s5, "sell zone", "buy-side", "bearish"), hdr, color.yellow)
     f_cell(2, 7, f_next(allowLong, not na(lExp), l2, l3, l5, "buy zone", "sell-side", "bullish"), hdr, color.yellow)
-    if isAuto
-        f_cell(0, 8, "Auto daily bias", na, wht)
-        f_cell(1, 8, dBias == 1 ? "Bullish" : dBias == -1 ? "Bearish" : "None", na, wht)
+    if farTxt != ""
+        f_cell(0, 8, "Not drawn (too far)", na, color.gray)
+        f_cell(1, 8, farTxt, na, color.gray)
         f_cell(2, 8, "", na, wht)
+    if isAuto
+        f_cell(0, 9, "Auto daily bias", na, wht)
+        f_cell(1, 9, dBias == 1 ? "Bullish" : dBias == -1 ? "Bearish" : "None", na, wht)
+        f_cell(2, 9, "", na, wht)
 
 f_lg(int r, string sym, color c, string t) =>
     table.cell(lgd, 0, r, sym, text_color = c, text_size = sz)

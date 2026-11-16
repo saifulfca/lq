@@ -15,20 +15,66 @@ price alone. File: [`lq_playbook.pine`](lq_playbook.pine).
 
 If TradingView shows a compile error, send me the error text and line number.
 
-## Making it easier to read
+## Turning elements on and off
 
-Open the indicator settings (double-click its name on the chart), **Display** group:
+Open the indicator settings (double-click its name on the chart). The first
+group, **Show / hide on chart**, has one switch per element:
+
+| Switch | Default |
+|---|---|
+| Weekly high / low (PWH / PWL) | on |
+| Daily high / low (PDH / PDL) | on |
+| Monday high / low | on |
+| Grey shading on Monday | on |
+| 1H FVG zones | on |
+| 4H FVG zones | on |
+| BPR zones | on |
+| Equal highs / lows (EQH / EQL) | on |
+| All swing high / low lines | off |
+| Liquidity sweeps / traps (triangles) | on |
+| Which sweeps: `Key pools only` / `Key pools + inside zones` / `All` | Key pools + inside zones |
+| Yellow triangle when RSI diverges | on |
+| Possible inducement (pink diamonds) | on |
+| BOS labels | off |
+| Setup labels + entry box | on |
+| BUY / SELL signals + SL / TP boxes | on |
+
+These switches only change what is **drawn**. The setup logic and the status
+panel still use everything, so hiding the 4H zones does not stop 4H-based
+setups. To change the logic, use the WHEN / NOW groups (for example
+`Use timeframe B` or `Require a 1H/4H zone tap`).
+
+## Keeping the normal chart scale
+
+TradingView zooms the price axis out so that everything an indicator draws
+fits on screen. A weekly low far below price squeezes the candles into a
+thin strip. To prevent this, the **Chart scale** group has:
 
 | Setting | Default | What it does |
 |---|---|---|
-| Mode | **Clean** | **Minimal**: levels, 1H/4H zones, setups and trades only. **Clean**: adds small markers for sweeps and possible inducement. **Detailed**: every swing line, every sweep and every BOS, with text |
+| Keep normal chart scale | on | Levels, zones and equal-high/low lines farther from price than the distance below are not drawn |
+| Max distance from price (x daily ATR) | 1.5 | 1.5 = one and a half average daily ranges. Raise it to see more, lower it for a tighter chart |
+
+Levels that are too far away still count in the logic. The status panel lists
+them in a `Not drawn (too far)` row with their prices, for example
+`PWL 3,742.10`. They are drawn again automatically once price comes within
+range.
+
+If the chart still looks squeezed, other indicators may be the cause. Hide
+them one at a time with the eye icon to check. You can also double-click the
+price axis to reset TradingView's auto-scale.
+
+## Display
+
+| Setting | Default | What it does |
+|---|---|---|
 | Draw markers/lines for the last N bars | 200 | Older history is left blank |
-| Show the nearest N zones above and below price | 2 | Hides far-away 1H/4H zones. They come back when price gets close |
-| Text size | Normal | Small / Normal / Large for labels, the status panel and the legend |
+| Show the nearest N zones above and below price | 2 | Hides far-away 1H/4H zones |
+| Text size | Normal | Small / Normal / Large |
 | Min bars between inducement markers | 30 | Stops `IDM?` markers stacking up in a choppy range |
 | Inducement only within x ATR of the zone | 6 | Only marks inducement when the untouched zone is close |
-| Status panel position | Top right | Move the panel if it sits under your drawing toolbar. The legend goes in the opposite corner |
-| Show legend | On | A key that explains each symbol and colour. Turn it off once you know them |
+| Status panel position | Top right | The legend goes in the opposite corner |
+| Show status panel / Show legend | on | Turn the tables off |
 
 ### Status panel
 
@@ -54,7 +100,7 @@ it may be inducement.
 
 | On the chart | Playbook step | Meaning |
 |---|---|---|
-| `PWH` / `PWL` thick lines | Where | Previous week high / low. Tag says `(taken)` and the line turns dashed once traded through |
+| `PWH` / `PWL` thick lines | Where | Previous week high / low. Tag says `(taken)` and the line turns dashed once traded through. Not drawn if too far from price |
 | `PDH` / `PDL` thin lines | Where | Previous day high / low |
 | `Mon H` / `Mon L` yellow lines | Where, Monday filter | Monday high / low, drawn from Tuesday on |
 | Grey background | Monday filter | Monday. No setups fire on Monday (can be switched off) |
@@ -65,7 +111,7 @@ it may be inducement.
 | Aqua ▲ below a candle | Step 3 | Sell-side liquidity taken. Same rules |
 | Yellow ▼ / ▲ | Step 3 | Liquidity taken **with RSI divergence** |
 | Pink ◆ `IDM?` | Step 2 (inducement) | A break of structure just before price reached a nearby 1H/4H zone. Traders acting on it may be early, and their stops become fuel |
-| `BOS`, dotted swing lines | Detailed mode only | Every break of structure and every swing |
+| `BOS`, dotted swing lines | Off by default | Every break of structure and every swing (switch on in Show / hide) |
 | `SHORT setup` / `LONG setup` + `entry` box | Step 4 | Liquidity taken + 1H/4H zone tapped + 3-candle displacement. Hover for SL / TP |
 | `SELL` / `BUY` with red and green boxes | Step 5 | Entry triggered. Red box = risk to the stop, green box = reward to the 1H/4H target, with the risk-to-reward ratio |
 | Status panel | Checklist | Each step in words for short and long, plus the next step to wait for |
